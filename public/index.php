@@ -4,9 +4,13 @@ declare(strict_types=1);
 
 use Building\Domain\Aggregate\Building;
 use Building\Domain\Command;
+use Building\Domain\Command\CheckinBuilding;
+use Building\Domain\Command\CheckoutBuilding;
 use Building\Domain\DomainEvent;
 use Building\Domain\Repository\BuildingRepositoryInterface;
 use Building\Infrastructure\CommandHandler;
+use Building\Infrastructure\CommandHandler\CheckinBuildingHandler;
+use Building\Infrastructure\CommandHandler\CheckoutBuildingHandler;
 use Building\Infrastructure\CommandHandler\RegisterNewBuildingHandler;
 use Building\Infrastructure\Repository\BuildingRepository;
 use Doctrine\DBAL\Connection;
@@ -134,6 +138,15 @@ call_user_func(function () {
 
                 return $eventStore;
             },
+            DomainEvent\CheckedIntoBuilding::class . '-listeners' => function (ContainerInterface $container) {
+                /** @var CommandBus $cb */
+                $cb = $container->get(CommandBus::class);
+                return [
+                    function (DomainEvent\CheckedIntoBuilding $event) use ($cb) {
+                        $cb->dispatch(CheckoutBuilding::new($event->buildingId(), $event->name()));
+                    }
+                ];
+            },
 
             CommandBus::class                  => function (ContainerInterface $container) : CommandBus {
                 $commandBus = new CommandBus();
@@ -170,6 +183,12 @@ call_user_func(function () {
             // Command -> CommandHandlerFactory
             Command\RegisterNewBuilding::class => function (ContainerInterface $container) : RegisterNewBuildingHandler {
                 return new RegisterNewBuildingHandler($container->get(BuildingRepositoryInterface::class));
+            },
+            Command\CheckinBuilding::class => function (ContainerInterface $container) : CheckinBuildingHandler {
+                return new CheckinBuildingHandler($container->get(BuildingRepositoryInterface::class));
+            },
+            Command\CheckoutBuilding::class => function (ContainerInterface $container) : CheckoutBuildingHandler {
+                return new CheckoutBuildingHandler($container->get(BuildingRepositoryInterface::class));
             },
             BuildingRepositoryInterface::class => function (ContainerInterface $container) : BuildingRepositoryInterface {
                 return new BuildingRepository(
@@ -211,11 +230,20 @@ call_user_func(function () {
     });
 
     $app->post('/checkin/{buildingId}', function (Request $request, Response $response) use ($sm) {
-
+        $buildingId = Uuid::fromString($request->getAttribute('buildingId'));
+       
+        $commandBus = $sm->get(CommandBus::class);
+        $commandBus->dispatch(Command\CheckinBuilding::new($buildingId, $request->getParsedBody()['username']));
+        return $response->withAddedHeader('Location', '/building/' . $buildingId);
     });
 
     $app->post('/checkout/{buildingId}', function (Request $request, Response $response) use ($sm) {
+        $buildingId = Uuid::fromString($request->getAttribute('buildingId'));
 
+        $commandBus = $sm->get(CommandBus::class);
+        $commandBus->dispatch(Command\CheckoutBuilding::new($buildingId, $request->getParsedBody()['username']));
+
+        return $response->withAddedHeader('Location', '/building/' . $buildingId);
     });
 
     $app->run();
